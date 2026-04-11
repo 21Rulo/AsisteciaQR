@@ -1,14 +1,19 @@
 package com.sssl.asisteciaqr.ui.viewmodel
 
+import android.content.Context
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.sssl.asisteciaqr.data.entity.Alumno
 import com.sssl.asisteciaqr.data.entity.Asistencia
 import com.sssl.asisteciaqr.data.entity.Grupo
 import com.sssl.asisteciaqr.data.repository.AsistenciaRepository
+import com.sssl.asisteciaqr.utils.CSVParser
 import com.sssl.asisteciaqr.utils.DateUtils
+import com.sssl.asisteciaqr.utils.PDFGenerator
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import java.io.File
 
 class AsistenciaViewModel(
     private val repository: AsistenciaRepository
@@ -39,6 +44,9 @@ class AsistenciaViewModel(
 
     private val _scanMessage = MutableStateFlow<ScanMessage?>(null)
     val scanMessage: StateFlow<ScanMessage?> = _scanMessage.asStateFlow()
+
+    private val _csvImportResult = MutableStateFlow<CSVImportResult?>(null)
+    val csvImportResult: StateFlow<CSVImportResult?> = _csvImportResult.asStateFlow()
 
     // ==================== GRUPOS ====================
 
@@ -73,32 +81,56 @@ class AsistenciaViewModel(
 
     // ==================== ALUMNOS ====================
 
-    fun addAlumnoFromQR(qrContent: String, grupoId: Long) {
+    /**
+     * Importa alumnos desde un archivo CSV
+     */
+    fun importarCSV(context: Context, uri: Uri, grupoId: Long) {
         viewModelScope.launch {
             try {
-                // Parsear JSON del QR
-                val matriculaRegex = """"matricula"\s*:\s*"([^"]+)"""".toRegex()
-                val nombreRegex = """"nombre"\s*:\s*"([^"]+)"""".toRegex()
+                val result = CSVParser.parseCSV(context, uri, grupoId)
 
-                val matricula = matriculaRegex.find(qrContent)?.groupValues?.get(1)
-                val nombre = nombreRegex.find(qrContent)?.groupValues?.get(1)
+                if (result.alumnos.isNotEmpty()) {
+                    // Insertar todos los alumnos
+                    repository.insertAlumnos(result.alumnos)
 
-                if (matricula != null && nombre != null) {
-                    // Verificar si ya existe
-                    val existente = repository.getAlumnoByMatricula(matricula)
-                    if (existente != null) {
-                        _scanMessage.value = ScanMessage.AlreadyExists(nombre)
-                    } else {
-                        val alumno = Alumno(
-                            matricula = matricula,
-                            nombre = nombre,
-                            grupoId = grupoId
-                        )
-                        repository.insertAlumno(alumno)
-                        _scanMessage.value = ScanMessage.AlumnoAdded(nombre)
-                    }
+                    _csvImportResult.value = CSVImportResult.Success(
+                        importados = result.alumnos.size,
+                        errores = result.errores
+                    )
                 } else {
-                    _scanMessage.value = ScanMessage.InvalidQR
+                    _csvImportResult.value = CSVImportResult.Error(
+                        "No se encontraron alumnos válidos en el archivo",
+                        result.errores
+                    )
+                }
+            } catch (e: Exception) {
+                _csvImportResult.value = CSVImportResult.Error(
+                    "Error al importar: ${e.message}",
+                    emptyList()
+                )
+            }
+        }
+    }
+
+    /**
+     * Agrega un alumno manualmente
+     */
+    fun agregarAlumnoManual(nombre: String, matricula: String, grupoId: Long, onSuccess: () -> Unit) {
+        viewModelScope.launch {
+            try {
+                // Verificar si ya existe
+                val existente = repository.getAlumnoByMatricula(matricula)
+                if (existente != null) {
+                    _scanMessage.value = ScanMessage.AlreadyExists(nombre)
+                } else {
+                    val alumno = Alumno(
+                        matricula = matricula.trim(),
+                        nombre = nombre.trim(),
+                        grupoId = grupoId
+                        // qrToken se genera automáticamente con UUID
+                    )
+                    repository.insertAlumno(alumno)
+                    onSuccess()
                 }
             } catch (e: Exception) {
                 _scanMessage.value = ScanMessage.Error(e.message ?: "Error desconocido")
@@ -113,25 +145,55 @@ class AsistenciaViewModel(
         }
     }
 
+    /**
+     * Genera un PDF con los códigos QR de todos los alumnos del grupo
+     */
+    fun generarPDFconQRs(context: Context, grupoId: Long, onSuccess: (File) -> Unit, onError: (String) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val grupo = repository.getGrupoById(grupoId)
+                val alumnos = alumnosDelGrupo.value
+
+                if (alumnos.isEmpty()) {
+                    onError("No hay alumnos en este grupo")
+                    return@launch
+                }
+
+                val file = PDFGenerator.generarPDFconQRs(
+                    context = context,
+                    alumnos = alumnos,
+                    nombreGrupo = grupo?.nombreGrupo ?: "Grupo"
+                )
+
+                if (file != null) {
+                    onSuccess(file)
+                } else {
+                    onError("Error al generar el PDF")
+                }
+            } catch (e: Exception) {
+                onError("Error: ${e.message}")
+            }
+        }
+    }
+
     // ==================== ASISTENCIAS ====================
 
+    /**
+     * Registra asistencia usando el UUID del QR
+     */
     fun registrarAsistencia(qrContent: String, grupoId: Long) {
         viewModelScope.launch {
             try {
-                // Parsear JSON del QR
-                val matriculaRegex = """"matricula"\s*:\s*"([^"]+)"""".toRegex()
-                val nombreRegex = """"nombre"\s*:\s*"([^"]+)"""".toRegex()
+                // El QR ahora solo contiene el UUID
+                val qrToken = qrContent.trim()
 
-                val matricula = matriculaRegex.find(qrContent)?.groupValues?.get(1)
-                val nombre = nombreRegex.find(qrContent)?.groupValues?.get(1)
-
-                if (matricula.isNullOrBlank()) {
+                if (qrToken.isBlank()) {
                     _scanMessage.value = ScanMessage.InvalidQR
                     return@launch
                 }
 
-                // Verificar que el alumno existe y pertenece al grupo
-                val alumno = repository.getAlumnoByMatricula(matricula)
+                // Buscar alumno por UUID
+                val alumno = repository.getAlumnoByQrToken(qrToken)
 
                 when {
                     alumno == null -> {
@@ -143,14 +205,14 @@ class AsistenciaViewModel(
                     else -> {
                         // Verificar si ya registró asistencia hoy
                         val fecha = DateUtils.getCurrentDate()
-                        val yaRegistro = repository.getAsistenciaHoy(matricula, fecha, grupoId)
+                        val yaRegistro = repository.getAsistenciaHoy(alumno.matricula, fecha, grupoId)
 
                         if (yaRegistro != null) {
                             _scanMessage.value = ScanMessage.AlreadyRegistered(alumno.nombre)
                         } else {
                             // Registrar asistencia
                             val asistencia = Asistencia(
-                                matriculaAlumno = matricula,
+                                matriculaAlumno = alumno.matricula,
                                 grupoId = grupoId,
                                 fecha = fecha,
                                 hora = DateUtils.getCurrentTime()
@@ -169,6 +231,10 @@ class AsistenciaViewModel(
     fun clearScanMessage() {
         _scanMessage.value = null
     }
+
+    fun clearCSVImportResult() {
+        _csvImportResult.value = null
+    }
 }
 
 // Clase sellada para mensajes de escaneo
@@ -181,4 +247,10 @@ sealed class ScanMessage {
     data class Error(val message: String) : ScanMessage()
     object NotInGroup : ScanMessage()
     object InvalidQR : ScanMessage()
+}
+
+// Resultado de importación CSV
+sealed class CSVImportResult {
+    data class Success(val importados: Int, val errores: List<String>) : CSVImportResult()
+    data class Error(val message: String, val errores: List<String>) : CSVImportResult()
 }

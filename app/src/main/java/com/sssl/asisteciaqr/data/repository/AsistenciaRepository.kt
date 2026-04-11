@@ -44,6 +44,9 @@ class AsistenciaRepository(
     suspend fun getAlumnoByMatricula(matricula: String): Alumno? =
         alumnoDao.getAlumnoByMatricula(matricula)
 
+    suspend fun getAlumnoByQrToken(qrToken: String): Alumno? =
+        alumnoDao.getAlumnoByQrToken(qrToken)
+
     fun getAlumnosCountByGrupo(grupoId: Long): Flow<Int> =
         alumnoDao.getAlumnosCountByGrupo(grupoId)
 

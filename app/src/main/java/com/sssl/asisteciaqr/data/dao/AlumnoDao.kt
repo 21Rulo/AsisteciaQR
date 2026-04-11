@@ -25,6 +25,9 @@ interface AlumnoDao {
     @Query("SELECT * FROM alumnos WHERE matricula = :matricula")
     suspend fun getAlumnoByMatricula(matricula: String): Alumno?
 
+    @Query("SELECT * FROM alumnos WHERE qrToken = :qrToken")
+    suspend fun getAlumnoByQrToken(qrToken: String): Alumno?
+
     @Query("SELECT * FROM alumnos WHERE matricula = :matricula")
     fun getAlumnoByMatriculaFlow(matricula: String): Flow<Alumno?>
 

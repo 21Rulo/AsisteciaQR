@@ -1,24 +1,27 @@
 package com.sssl.asisteciaqr.ui.screens.profesor
 
 import android.Manifest
-import android.media.ToneGenerator
 import android.media.AudioManager
+import android.media.ToneGenerator
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.journeyapps.barcodescanner.ScanContract
-import com.journeyapps.barcodescanner.ScanOptions
+import com.sssl.asisteciaqr.ui.components.ContinuousQRScanner
 import com.sssl.asisteciaqr.ui.viewmodel.AsistenciaViewModel
 import com.sssl.asisteciaqr.ui.viewmodel.ScanMessage
 import com.sssl.asisteciaqr.utils.DateUtils
@@ -35,7 +38,7 @@ fun ScanAsistenciaScreen(
     val alumnos by viewModel.alumnosDelGrupo.collectAsState()
     val context = LocalContext.current
     var hasPermission by remember { mutableStateOf(false) }
-    var isScanning by remember { mutableStateOf(false) }
+    var showStats by remember { mutableStateOf(false) }
 
     val toneGenerator = remember {
         ToneGenerator(AudioManager.STREAM_MUSIC, 100)
@@ -47,15 +50,6 @@ fun ScanAsistenciaScreen(
         hasPermission = isGranted
     }
 
-    val scanLauncher = rememberLauncherForActivityResult(
-        contract = ScanContract()
-    ) { result ->
-        isScanning = false
-        if (result.contents != null) {
-            viewModel.registrarAsistencia(result.contents, grupoId)
-        }
-    }
-
     LaunchedEffect(Unit) {
         permissionLauncher.launch(Manifest.permission.CAMERA)
     }
@@ -64,22 +58,22 @@ fun ScanAsistenciaScreen(
     LaunchedEffect(scanMessage) {
         when (scanMessage) {
             is ScanMessage.Success -> {
-                // Sonido de éxito
+                // Sonido de éxito (beep corto)
                 toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP, 150)
             }
-            is ScanMessage.AlreadyRegistered, is ScanMessage.WrongGroup -> {
-                // Sonido de advertencia
+            is ScanMessage.AlreadyRegistered -> {
+                // Sonido de advertencia (dos beeps)
                 toneGenerator.startTone(ToneGenerator.TONE_PROP_NACK, 200)
             }
-            is ScanMessage.Error, is ScanMessage.InvalidQR, is ScanMessage.NotInGroup -> {
-                // Sonido de error
+            is ScanMessage.Error, is ScanMessage.InvalidQR, is ScanMessage.NotInGroup, is ScanMessage.WrongGroup -> {
+                // Sonido de error (beep largo)
                 toneGenerator.startTone(ToneGenerator.TONE_CDMA_ABBR_ALERT, 300)
             }
             else -> {}
         }
 
         if (scanMessage != null) {
-            kotlinx.coroutines.delay(2000)
+            kotlinx.coroutines.delay(2500)
             viewModel.clearScanMessage()
         }
     }
@@ -98,113 +92,181 @@ fun ScanAsistenciaScreen(
                     IconButton(onClick = onBack) {
                         Icon(Icons.Default.ArrowBack, "Volver")
                     }
+                },
+                actions = {
+                    IconButton(onClick = { showStats = !showStats }) {
+                        Icon(
+                            if (showStats) Icons.Default.CameraAlt else Icons.Default.BarChart,
+                            "Alternar vista"
+                        )
+                    }
                 }
             )
-        },
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = {
-                    if (hasPermission) {
-                        isScanning = true
-                        val options = ScanOptions().apply {
-                            setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-                            setPrompt("Escanea el QR del alumno")
-                            setBeepEnabled(false) // Usaremos nuestros propios sonidos
-                            setOrientationLocked(false)
-                            setCameraId(0)
-                        }
-                        scanLauncher.launch(options)
-                    } else {
-                        permissionLauncher.launch(Manifest.permission.CAMERA)
-                    }
-                },
-                containerColor = MaterialTheme.colorScheme.primary
-            ) {
-                Icon(Icons.Default.QrCodeScanner, "Escanear")
-            }
         }
     ) { paddingValues ->
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            // Estadísticas
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer
+            if (showStats) {
+                // Vista de estadísticas
+                EstadisticasView(
+                    alumnos = alumnos,
+                    asistenciasHoy = asistenciasHoy
                 )
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = DateUtils.formatDateForDisplay(DateUtils.getCurrentDate()),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
+            } else {
+                // Vista de cámara continua
+                if (hasPermission) {
+                    ContinuousQRScanner(
+                        modifier = Modifier.fillMaxSize(),
+                        onQRScanned = { qrContent ->
+                            viewModel.registrarAsistencia(qrContent, grupoId)
+                        }
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
+
+                    // Overlay con información
+                    ScanOverlay(
+                        scanMessage = scanMessage,
+                        totalAlumnos = alumnos.size,
+                        presentes = asistenciasHoy.size
+                    )
+                } else {
+                    // Sin permiso de cámara
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Column {
-                            Text(
-                                text = "Presentes",
-                                style = MaterialTheme.typography.bodySmall
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.padding(24.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CameraAlt,
+                                contentDescription = null,
+                                modifier = Modifier.size(64.dp),
+                                tint = MaterialTheme.colorScheme.error
                             )
+                            Spacer(modifier = Modifier.height(16.dp))
                             Text(
-                                text = "${asistenciasHoy.size}",
-                                style = MaterialTheme.typography.headlineMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
+                                text = "Permiso de cámara requerido",
+                                style = MaterialTheme.typography.titleMedium
                             )
-                        }
-                        Column {
-                            Text(
-                                text = "Faltas",
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                            Text(
-                                text = "${alumnos.size - asistenciasHoy.size}",
-                                style = MaterialTheme.typography.headlineMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.error
-                            )
-                        }
-                        Column {
-                            Text(
-                                text = "Total",
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                            Text(
-                                text = "${alumnos.size}",
-                                style = MaterialTheme.typography.headlineMedium,
-                                fontWeight = FontWeight.Bold
-                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Button(onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) }) {
+                                Text("Solicitar permiso")
+                            }
                         }
                     }
                 }
             }
+        }
+    }
+}
 
-            // Mensaje de feedback
-            scanMessage?.let { message ->
-                Card(
+@Composable
+fun ScanOverlay(
+    scanMessage: ScanMessage?,
+    totalAlumnos: Int,
+    presentes: Int
+) {
+    Column(
+        modifier = Modifier.fillMaxSize()
+    ) {
+        // Estadísticas en la parte superior
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
+            )
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = "$presentes",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "Presentes",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+
+                Divider(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                        .height(40.dp)
+                        .width(1.dp)
+                )
+
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = "${totalAlumnos - presentes}",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    Text(
+                        text = "Faltas",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+
+                Divider(
+                    modifier = Modifier
+                        .height(40.dp)
+                        .width(1.dp)
+                )
+
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = "$totalAlumnos",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Total",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.weight(1f))
+
+        // Mensaje de feedback centrado
+        scanMessage?.let { message ->
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(0.9f),
                     colors = CardDefaults.cardColors(
                         containerColor = when (message) {
-                            is ScanMessage.Success -> MaterialTheme.colorScheme.primaryContainer
-                            is ScanMessage.AlreadyRegistered -> MaterialTheme.colorScheme.tertiaryContainer
-                            else -> MaterialTheme.colorScheme.errorContainer
+                            is ScanMessage.Success -> Color(0xFF4CAF50)
+                            is ScanMessage.AlreadyRegistered -> Color(0xFFFF9800)
+                            else -> Color(0xFFF44336)
                         }
-                    )
+                    ),
+                    shape = RoundedCornerShape(16.dp)
                 ) {
                     Row(
-                        modifier = Modifier.padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
                     ) {
                         Icon(
                             imageVector = when (message) {
@@ -213,104 +275,109 @@ fun ScanAsistenciaScreen(
                                 else -> Icons.Default.Error
                             },
                             contentDescription = null,
-                            tint = when (message) {
-                                is ScanMessage.Success -> MaterialTheme.colorScheme.primary
-                                is ScanMessage.AlreadyRegistered -> MaterialTheme.colorScheme.tertiary
-                                else -> MaterialTheme.colorScheme.error
-                            }
+                            tint = Color.White,
+                            modifier = Modifier.size(32.dp)
                         )
-                        Spacer(modifier = Modifier.width(12.dp))
+                        Spacer(modifier = Modifier.width(16.dp))
                         Text(
                             text = when (message) {
-                                is ScanMessage.Success -> "✓ ${message.nombre} - Asistencia registrada"
-                                is ScanMessage.AlreadyRegistered -> "⚠ ${message.nombre} ya registró asistencia"
-                                is ScanMessage.WrongGroup -> "✗ ${message.nombre} no pertenece a este grupo"
-                                is ScanMessage.NotInGroup -> "✗ Alumno no registrado en el sistema"
+                                is ScanMessage.Success -> "✓ ${message.nombre}\nAsistencia registrada"
+                                is ScanMessage.AlreadyRegistered -> "⚠ ${message.nombre}\nYa registró asistencia"
+                                is ScanMessage.WrongGroup -> "✗ ${message.nombre}\nNo pertenece a este grupo"
+                                is ScanMessage.NotInGroup -> "✗ Alumno no registrado"
                                 is ScanMessage.InvalidQR -> "✗ Código QR inválido"
                                 is ScanMessage.Error -> "✗ Error: ${message.message}"
                                 else -> ""
                             },
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Medium
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            textAlign = TextAlign.Center
                         )
                     }
                 }
             }
+        }
 
-            // Lista de asistencias
-            if (asistenciasHoy.isEmpty()) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
+        Spacer(modifier = Modifier.height(80.dp))
+
+        // Instrucciones
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
+            )
+        ) {
+            Text(
+                text = "Apunta la cámara al código QR del alumno",
+                style = MaterialTheme.typography.bodyMedium,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+            )
+        }
+    }
+}
+
+@Composable
+fun EstadisticasView(
+    alumnos: List<com.sssl.asisteciaqr.data.entity.Alumno>,
+    asistenciasHoy: List<com.sssl.asisteciaqr.data.entity.Asistencia>
+) {
+    LazyColumn(
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        items(alumnos.sortedBy { it.nombre }) { alumno ->
+            val presente = asistenciasHoy.any { it.matriculaAlumno == alumno.matricula }
+            val asistencia = asistenciasHoy.find { it.matriculaAlumno == alumno.matricula }
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (presente)
+                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                    else
+                        MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+                )
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.padding(24.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.QrCodeScanner,
-                            contentDescription = null,
-                            modifier = Modifier.size(64.dp),
-                            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
+                    Icon(
+                        imageVector = if (presente) Icons.Default.CheckCircle else Icons.Default.Cancel,
+                        contentDescription = null,
+                        tint = if (presente)
+                            MaterialTheme.colorScheme.primary
+                        else
+                            MaterialTheme.colorScheme.error
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "No hay asistencias registradas",
-                            style = MaterialTheme.typography.titleMedium
+                            text = alumno.nombre,
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Medium
                         )
-                        Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "Presiona el botón para escanear",
-                            style = MaterialTheme.typography.bodyMedium,
+                            text = alumno.matricula,
+                            style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                }
-            } else {
-                LazyColumn(
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(asistenciasHoy.sortedByDescending { it.timestamp }) { asistencia ->
-                        val alumno = alumnos.find { it.matricula == asistencia.matriculaAlumno }
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f)
-                            )
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(16.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.CheckCircle,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = alumno?.nombre ?: "Desconocido",
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                    Text(
-                                        text = asistencia.matriculaAlumno,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                Text(
-                                    text = DateUtils.formatTimeForDisplay(asistencia.hora),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
+                    if (presente && asistencia != null) {
+                        Text(
+                            text = DateUtils.formatTimeForDisplay(asistencia.hora),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
             }

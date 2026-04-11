@@ -1,5 +1,9 @@
 package com.sssl.asisteciaqr.ui.screens.profesor
 
+import android.content.Intent
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -9,24 +13,38 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
 import com.sssl.asisteciaqr.ui.viewmodel.AsistenciaViewModel
-import kotlinx.coroutines.flow.filterNotNull
-import kotlinx.coroutines.flow.first
+import com.sssl.asisteciaqr.ui.viewmodel.CSVImportResult
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GrupoDetailScreen(
     viewModel: AsistenciaViewModel,
     grupoId: Long,
-    onAddAlumnos: () -> Unit,
     onScanAsistencia: () -> Unit,
     onBack: () -> Unit
 ) {
+    val context = LocalContext.current
     val grupos by viewModel.grupos.collectAsState()
     val alumnos by viewModel.alumnosDelGrupo.collectAsState()
     val asistenciasHoy by viewModel.asistenciasHoy.collectAsState()
+    val csvImportResult by viewModel.csvImportResult.collectAsState()
+
+    var showAddDialog by remember { mutableStateOf(false) }
+    var isGeneratingPDF by remember { mutableStateOf(false) }
+
+    // Launcher para seleccionar archivo CSV
+    val csvLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        uri?.let {
+            viewModel.importarCSV(context, it, grupoId)
+        }
+    }
 
     // Cargar grupo seleccionado
     LaunchedEffect(grupoId) {
@@ -36,6 +54,23 @@ fun GrupoDetailScreen(
 
     val selectedGrupo = grupos.find { it.id == grupoId }
 
+    // Mostrar resultado de importación CSV
+    LaunchedEffect(csvImportResult) {
+        csvImportResult?.let { result ->
+            when (result) {
+                is CSVImportResult.Success -> {
+                    val mensaje = "✓ ${result.importados} alumnos importados" +
+                            if (result.errores.isNotEmpty()) "\n⚠ ${result.errores.size} errores" else ""
+                    Toast.makeText(context, mensaje, Toast.LENGTH_LONG).show()
+                }
+                is CSVImportResult.Error -> {
+                    Toast.makeText(context, result.message, Toast.LENGTH_LONG).show()
+                }
+            }
+            viewModel.clearCSVImportResult()
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -43,6 +78,51 @@ fun GrupoDetailScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Default.ArrowBack, "Volver")
+                    }
+                },
+                actions = {
+                    // Botón para generar PDF
+                    IconButton(
+                        onClick = {
+                            if (alumnos.isEmpty()) {
+                                Toast.makeText(context, "No hay alumnos para generar QRs", Toast.LENGTH_SHORT).show()
+                                return@IconButton
+                            }
+                            isGeneratingPDF = true
+                            viewModel.generarPDFconQRs(
+                                context = context,
+                                grupoId = grupoId,
+                                onSuccess = { file ->
+                                    isGeneratingPDF = false
+                                    // Compartir PDF
+                                    val uri = FileProvider.getUriForFile(
+                                        context,
+                                        "${context.packageName}.fileprovider",
+                                        file
+                                    )
+                                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                        type = "application/pdf"
+                                        putExtra(Intent.EXTRA_STREAM, uri)
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    }
+                                    context.startActivity(Intent.createChooser(shareIntent, "Compartir PDF"))
+                                },
+                                onError = { error ->
+                                    isGeneratingPDF = false
+                                    Toast.makeText(context, error, Toast.LENGTH_SHORT).show()
+                                }
+                            )
+                        },
+                        enabled = !isGeneratingPDF
+                    ) {
+                        if (isGeneratingPDF) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(24.dp),
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Icon(Icons.Default.PictureAsPdf, "Generar PDF")
+                        }
                     }
                 }
             )
@@ -52,6 +132,7 @@ fun GrupoDetailScreen(
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                // Botón pasar lista
                 FloatingActionButton(
                     onClick = onScanAsistencia,
                     containerColor = MaterialTheme.colorScheme.primary
@@ -59,11 +140,20 @@ fun GrupoDetailScreen(
                     Icon(Icons.Default.QrCodeScanner, "Pasar lista")
                 }
 
+                // Botón agregar alumno manual
                 FloatingActionButton(
-                    onClick = onAddAlumnos,
+                    onClick = { showAddDialog = true },
                     containerColor = MaterialTheme.colorScheme.secondary
                 ) {
-                    Icon(Icons.Default.PersonAdd, "Agregar alumnos")
+                    Icon(Icons.Default.PersonAdd, "Agregar alumno")
+                }
+
+                // Botón importar CSV
+                FloatingActionButton(
+                    onClick = { csvLauncher.launch("text/*") },
+                    containerColor = MaterialTheme.colorScheme.tertiary
+                ) {
+                    Icon(Icons.Default.Upload, "Importar CSV")
                 }
             }
         }
@@ -145,7 +235,7 @@ fun GrupoDetailScreen(
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "Presiona + para agregar alumnos",
+                            text = "Importa un CSV o agrega alumnos manualmente",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -167,6 +257,19 @@ fun GrupoDetailScreen(
                 }
             }
         }
+    }
+
+    // Dialog para agregar alumno manualmente
+    if (showAddDialog) {
+        AddAlumnoDialog(
+            onDismiss = { showAddDialog = false },
+            onConfirm = { nombre, matricula ->
+                viewModel.agregarAlumnoManual(nombre, matricula, grupoId) {
+                    showAddDialog = false
+                    Toast.makeText(context, "✓ Alumno agregado", Toast.LENGTH_SHORT).show()
+                }
+            }
+        )
     }
 }
 
@@ -222,4 +325,50 @@ fun AlumnoItem(
             }
         }
     }
+}
+
+@Composable
+fun AddAlumnoDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (String, String) -> Unit
+) {
+    var nombre by remember { mutableStateOf("") }
+    var matricula by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Agregar Alumno") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = nombre,
+                    onValueChange = { nombre = it },
+                    label = { Text("Nombre completo") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = matricula,
+                    onValueChange = { matricula = it },
+                    label = { Text("Matrícula") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(nombre, matricula) },
+                enabled = nombre.isNotBlank() && matricula.isNotBlank()
+            ) {
+                Text("Agregar")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancelar")
+            }
+        }
+    )
 }
