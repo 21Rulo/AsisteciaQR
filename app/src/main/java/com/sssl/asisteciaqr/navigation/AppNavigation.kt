@@ -1,17 +1,20 @@
 package com.sssl.asisteciaqr.navigation
 
+import android.content.Intent
+import android.widget.Toast
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.FileProvider
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
-import com.sssl.asisteciaqr.ui.screens.profesor.ProfesorLoginScreen
-import com.sssl.asisteciaqr.ui.screens.profesor.ProfesorHomeScreen
-import com.sssl.asisteciaqr.ui.screens.profesor.CreateGrupoScreen
-import com.sssl.asisteciaqr.ui.screens.profesor.GrupoDetailScreen
-import com.sssl.asisteciaqr.ui.screens.profesor.ScanAsistenciaScreen
+import com.sssl.asisteciaqr.ui.screens.profesor.*
 import com.sssl.asisteciaqr.ui.viewmodel.AsistenciaViewModel
+import com.sssl.asisteciaqr.utils.ReportePDFGenerator
 
 sealed class Screen(val route: String) {
     object ProfesorLogin : Screen("profesor_login")
@@ -23,6 +26,13 @@ sealed class Screen(val route: String) {
     object ScanAsistencia : Screen("scan_asistencia/{grupoId}") {
         fun createRoute(grupoId: Long) = "scan_asistencia/$grupoId"
     }
+    // NUEVAS RUTAS
+    object Historial : Screen("historial/{grupoId}") {
+        fun createRoute(grupoId: Long) = "historial/$grupoId"
+    }
+    object DetalleAlumno : Screen("detalle_alumno/{grupoId}/{matricula}") {
+        fun createRoute(grupoId: Long, matricula: String) = "detalle_alumno/$grupoId/$matricula"
+    }
 }
 
 @Composable
@@ -30,6 +40,8 @@ fun AppNavigation(
     navController: NavHostController,
     viewModel: AsistenciaViewModel
 ) {
+    val context = LocalContext.current
+
     NavHost(
         navController = navController,
         startDestination = Screen.ProfesorLogin.route
@@ -77,6 +89,7 @@ fun AppNavigation(
                 viewModel = viewModel,
                 grupoId = grupoId,
                 onScanAsistencia = { navController.navigate(Screen.ScanAsistencia.createRoute(grupoId)) },
+                onVerHistorial = { navController.navigate(Screen.Historial.createRoute(grupoId)) }, // NUEVO
                 onBack = { navController.popBackStack() }
             )
         }
@@ -89,6 +102,119 @@ fun AppNavigation(
             ScanAsistenciaScreen(
                 viewModel = viewModel,
                 grupoId = grupoId,
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        // NUEVA: Pantalla de Historial
+        composable(
+            route = Screen.Historial.route,
+            arguments = listOf(navArgument("grupoId") { type = NavType.LongType })
+        ) { backStackEntry ->
+            val grupoId = backStackEntry.arguments?.getLong("grupoId") ?: return@composable
+            HistorialAsistenciaScreen(
+                viewModel = viewModel,
+                grupoId = grupoId,
+                onAlumnoClick = { matricula ->
+                    navController.navigate(Screen.DetalleAlumno.createRoute(grupoId, matricula))
+                },
+                onGenerarPDFGrupo = {
+                    // Generar PDF del grupo
+                    val grupos = viewModel.grupos.value
+                    val grupo = grupos.find { it.id == grupoId }
+                    val estadisticas = viewModel.estadisticasAlumnos.value
+                    val periodoSeleccionado = viewModel.periodoSeleccionado.value
+                    val estadisticasGrupo = viewModel.estadisticasGrupo.value
+
+                    if (grupo != null && estadisticas.isNotEmpty() && estadisticasGrupo != null) {
+                        val file = ReportePDFGenerator.generarReporteGrupo(
+                            context = context,
+                            nombreGrupo = grupo.nombreGrupo,
+                            materia = grupo.materia,
+                            estadisticas = estadisticas,
+                            periodo = periodoSeleccionado.nombre,
+                            totalClases = estadisticasGrupo.totalClases
+                        )
+
+                        if (file != null) {
+                            val uri = FileProvider.getUriForFile(
+                                context,
+                                "${context.packageName}.fileprovider",
+                                file
+                            )
+                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                type = "application/pdf"
+                                putExtra(Intent.EXTRA_STREAM, uri)
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            context.startActivity(Intent.createChooser(shareIntent, "Compartir Reporte"))
+                        } else {
+                            Toast.makeText(context, "Error al generar PDF", Toast.LENGTH_SHORT).show()
+                        }
+                    } else {
+                        Toast.makeText(context, "No hay datos para generar el reporte", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        // NUEVA: Pantalla de Detalle de Alumno
+        composable(
+            route = Screen.DetalleAlumno.route,
+            arguments = listOf(
+                navArgument("grupoId") { type = NavType.LongType },
+                navArgument("matricula") { type = NavType.StringType }
+            )
+        ) { backStackEntry ->
+            val grupoId = backStackEntry.arguments?.getLong("grupoId") ?: return@composable
+            val matricula = backStackEntry.arguments?.getString("matricula") ?: return@composable
+
+            DetalleAlumnoScreen(
+                viewModel = viewModel,
+                grupoId = grupoId,
+                matricula = matricula,
+                onGenerarPDFIndividual = {
+                    // Generar PDF individual
+                    val grupos = viewModel.grupos.value
+                    val grupo = grupos.find { it.id == grupoId }
+                    val alumnos = viewModel.alumnosDelGrupo.value
+                    val alumno = alumnos.find { it.matricula == matricula }
+                    val estadisticas = viewModel.estadisticasAlumnos.value
+                    val estadistica = estadisticas.find { it.alumno.matricula == matricula }
+                    val asistencias = viewModel.asistenciasAlumnoDetalle.value
+                    val periodoSeleccionado = viewModel.periodoSeleccionado.value
+
+                    if (grupo != null && alumno != null && estadistica != null) {
+                        val file = ReportePDFGenerator.generarReporteIndividual(
+                            context = context,
+                            nombreAlumno = alumno.nombre,
+                            matricula = alumno.matricula,
+                            nombreGrupo = grupo.nombreGrupo,
+                            estadistica = estadistica,
+                            asistencias = asistencias,
+                            periodo = periodoSeleccionado.nombre
+                        )
+
+                        if (file != null) {
+                            val uri = FileProvider.getUriForFile(
+                                context,
+                                "${context.packageName}.fileprovider",
+                                file
+                            )
+                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                type = "application/pdf"
+                                putExtra(Intent.EXTRA_STREAM, uri)
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            context.startActivity(Intent.createChooser(shareIntent, "Compartir Reporte Individual"))
+                        } else {
+                            Toast.makeText(context, "Error al generar PDF", Toast.LENGTH_SHORT).show()
+                        }
+                    } else {
+                        Toast.makeText(context, "No hay datos para generar el reporte", Toast.LENGTH_SHORT).show()
+                    }
+                },
                 onBack = { navController.popBackStack() }
             )
         }

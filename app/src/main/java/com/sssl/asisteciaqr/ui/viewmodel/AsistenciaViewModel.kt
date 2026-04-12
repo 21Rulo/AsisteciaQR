@@ -8,8 +8,10 @@ import com.sssl.asisteciaqr.data.entity.Alumno
 import com.sssl.asisteciaqr.data.entity.Asistencia
 import com.sssl.asisteciaqr.data.entity.Grupo
 import com.sssl.asisteciaqr.data.repository.AsistenciaRepository
+import com.sssl.asisteciaqr.model.PeriodoFiltro
 import com.sssl.asisteciaqr.utils.CSVParser
 import com.sssl.asisteciaqr.utils.DateUtils
+import com.sssl.asisteciaqr.utils.EstadisticasUtils
 import com.sssl.asisteciaqr.utils.PDFGenerator
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -48,6 +50,105 @@ class AsistenciaViewModel(
     private val _csvImportResult = MutableStateFlow<CSVImportResult?>(null)
     val csvImportResult: StateFlow<CSVImportResult?> = _csvImportResult.asStateFlow()
 
+    // ==================== HISTORIAL Y ESTADÍSTICAS ====================
+
+    private val _periodoSeleccionado = MutableStateFlow<PeriodoFiltro>(PeriodoFiltro.Hoy)
+    val periodoSeleccionado: StateFlow<PeriodoFiltro> = _periodoSeleccionado.asStateFlow()
+
+    private val _estadisticasAlumnos = MutableStateFlow<List<EstadisticasUtils.EstadisticasAlumno>>(emptyList())
+    val estadisticasAlumnos: StateFlow<List<EstadisticasUtils.EstadisticasAlumno>> = _estadisticasAlumnos.asStateFlow()
+
+    private val _estadisticasGrupo = MutableStateFlow<EstadisticasUtils.EstadisticasGrupo?>(null)
+    val estadisticasGrupo: StateFlow<EstadisticasUtils.EstadisticasGrupo?> = _estadisticasGrupo.asStateFlow()
+
+    private val _asistenciasAlumnoDetalle = MutableStateFlow<List<Asistencia>>(emptyList())
+    val asistenciasAlumnoDetalle: StateFlow<List<Asistencia>> = _asistenciasAlumnoDetalle.asStateFlow()
+
+    /**
+     * Cambia el filtro de periodo y recalcula estadísticas
+     */
+    fun setPeriodoFiltro(periodo: PeriodoFiltro, grupoId: Long) {
+        _periodoSeleccionado.value = periodo
+        cargarEstadisticas(grupoId, periodo)
+    }
+
+    /**
+     * Carga estadísticas según el periodo seleccionado
+     */
+    fun cargarEstadisticas(grupoId: Long, periodo: PeriodoFiltro = _periodoSeleccionado.value) {
+        viewModelScope.launch {
+            val alumnos = alumnosDelGrupo.value
+            val (fechaInicio, fechaFin) = periodo.getRangoFechas()
+
+            // Obtener total de clases en el periodo
+            val totalClases = if (periodo is PeriodoFiltro.Global) {
+                repository.countClasesTotales(grupoId)
+            } else {
+                repository.countClasesEnRango(grupoId, fechaInicio, fechaFin)
+            }
+
+            if (totalClases == 0) {
+                _estadisticasAlumnos.value = emptyList()
+                _estadisticasGrupo.value = EstadisticasUtils.EstadisticasGrupo(
+                    totalAlumnos = alumnos.size,
+                    totalClases = 0,
+                    promedioAsistencia = 0f,
+                    alumnosExcelentes = 0,
+                    alumnosBuenos = 0,
+                    alumnosRegulares = 0,
+                    alumnosRiesgo = 0
+                )
+                return@launch
+            }
+
+            // Calcular estadísticas por alumno
+            val estadisticas = alumnos.map { alumno ->
+                val asistencias = if (periodo is PeriodoFiltro.Global) {
+                    repository.getAsistenciasAlumnoGlobal(alumno.matricula, grupoId).first()
+                } else {
+                    repository.getAsistenciasAlumnoEnRango(
+                        alumno.matricula,
+                        grupoId,
+                        fechaInicio,
+                        fechaFin
+                    ).first()
+                }
+
+                EstadisticasUtils.calcularEstadisticasAlumno(
+                    alumno = alumno,
+                    asistenciasAlumno = asistencias,
+                    totalClases = totalClases
+                )
+            }
+
+            _estadisticasAlumnos.value = estadisticas
+            _estadisticasGrupo.value = EstadisticasUtils.calcularEstadisticasGrupo(estadisticas)
+        }
+    }
+
+    /**
+     * Carga el detalle de asistencias de un alumno específico
+     */
+    fun cargarDetalleAlumno(
+        matricula: String,
+        grupoId: Long,
+        periodo: PeriodoFiltro = _periodoSeleccionado.value
+    ) {
+        viewModelScope.launch {
+            val (fechaInicio, fechaFin) = periodo.getRangoFechas()
+
+            val asistenciasFlow = if (periodo is PeriodoFiltro.Global) {
+                repository.getAsistenciasAlumnoGlobal(matricula, grupoId)
+            } else {
+                repository.getAsistenciasAlumnoEnRango(matricula, grupoId, fechaInicio, fechaFin)
+            }
+
+            asistenciasFlow.collect { asistencias ->
+                _asistenciasAlumnoDetalle.value = asistencias
+            }
+        }
+    }
+
     // ==================== GRUPOS ====================
 
     fun createGrupo(nombreGrupo: String, materia: String, onSuccess: (Long) -> Unit) {
@@ -81,16 +182,12 @@ class AsistenciaViewModel(
 
     // ==================== ALUMNOS ====================
 
-    /**
-     * Importa alumnos desde un archivo CSV
-     */
     fun importarCSV(context: Context, uri: Uri, grupoId: Long) {
         viewModelScope.launch {
             try {
                 val result = CSVParser.parseCSV(context, uri, grupoId)
 
                 if (result.alumnos.isNotEmpty()) {
-                    // Insertar todos los alumnos
                     repository.insertAlumnos(result.alumnos)
 
                     _csvImportResult.value = CSVImportResult.Success(
@@ -112,13 +209,9 @@ class AsistenciaViewModel(
         }
     }
 
-    /**
-     * Agrega un alumno manualmente
-     */
     fun agregarAlumnoManual(nombre: String, matricula: String, grupoId: Long, onSuccess: () -> Unit) {
         viewModelScope.launch {
             try {
-                // Verificar si ya existe
                 val existente = repository.getAlumnoByMatricula(matricula)
                 if (existente != null) {
                     _scanMessage.value = ScanMessage.AlreadyExists(nombre)
@@ -127,7 +220,6 @@ class AsistenciaViewModel(
                         matricula = matricula.trim(),
                         nombre = nombre.trim(),
                         grupoId = grupoId
-                        // qrToken se genera automáticamente con UUID
                     )
                     repository.insertAlumno(alumno)
                     onSuccess()
@@ -145,9 +237,6 @@ class AsistenciaViewModel(
         }
     }
 
-    /**
-     * Genera un PDF con los códigos QR de todos los alumnos del grupo
-     */
     fun generarPDFconQRs(context: Context, grupoId: Long, onSuccess: (File) -> Unit, onError: (String) -> Unit) {
         viewModelScope.launch {
             try {
@@ -178,13 +267,9 @@ class AsistenciaViewModel(
 
     // ==================== ASISTENCIAS ====================
 
-    /**
-     * Registra asistencia usando el UUID del QR
-     */
     fun registrarAsistencia(qrContent: String, grupoId: Long) {
         viewModelScope.launch {
             try {
-                // El QR ahora solo contiene el UUID
                 val qrToken = qrContent.trim()
 
                 if (qrToken.isBlank()) {
@@ -192,7 +277,6 @@ class AsistenciaViewModel(
                     return@launch
                 }
 
-                // Buscar alumno por UUID
                 val alumno = repository.getAlumnoByQrToken(qrToken)
 
                 when {
@@ -203,14 +287,12 @@ class AsistenciaViewModel(
                         _scanMessage.value = ScanMessage.WrongGroup(alumno.nombre)
                     }
                     else -> {
-                        // Verificar si ya registró asistencia hoy
                         val fecha = DateUtils.getCurrentDate()
                         val yaRegistro = repository.getAsistenciaHoy(alumno.matricula, fecha, grupoId)
 
                         if (yaRegistro != null) {
                             _scanMessage.value = ScanMessage.AlreadyRegistered(alumno.nombre)
                         } else {
-                            // Registrar asistencia
                             val asistencia = Asistencia(
                                 matriculaAlumno = alumno.matricula,
                                 grupoId = grupoId,

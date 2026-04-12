@@ -79,4 +79,48 @@ class AsistenciaRepository(
         fechaInicio: String,
         fechaFin: String
     ): Int = asistenciaDao.countAsistenciasEnRango(matricula, grupoId, fechaInicio, fechaFin)
+
+    // ==================== HISTORIAL Y ESTADÍSTICAS ====================
+
+    fun getAsistenciasEnRango(
+        grupoId: Long,
+        fechaInicio: String,
+        fechaFin: String
+    ): Flow<List<Asistencia>> =
+        asistenciaDao.getAsistenciasEnRango(grupoId, fechaInicio, fechaFin)
+
+    fun getAsistenciasGlobal(grupoId: Long): Flow<List<Asistencia>> =
+        asistenciaDao.getAsistenciasGlobal(grupoId)
+
+    suspend fun countClasesTotales(grupoId: Long): Int =
+        asistenciaDao.countClasesTotales(grupoId)
+
+    suspend fun countClasesEnRango(
+        grupoId: Long,
+        fechaInicio: String,
+        fechaFin: String
+    ): Int = asistenciaDao.countClasesEnRango(grupoId, fechaInicio, fechaFin)
+
+    suspend fun getFechasClases(grupoId: Long): List<String> =
+        asistenciaDao.getFechasClases(grupoId)
+
+    suspend fun getFechasClasesEnRango(
+        grupoId: Long,
+        fechaInicio: String,
+        fechaFin: String
+    ): List<String> = asistenciaDao.getFechasClasesEnRango(grupoId, fechaInicio, fechaFin)
+
+    fun getAsistenciasAlumnoEnRango(
+        matricula: String,
+        grupoId: Long,
+        fechaInicio: String,
+        fechaFin: String
+    ): Flow<List<Asistencia>> =
+        asistenciaDao.getAsistenciasAlumnoEnRango(matricula, grupoId, fechaInicio, fechaFin)
+
+    fun getAsistenciasAlumnoGlobal(
+        matricula: String,
+        grupoId: Long
+    ): Flow<List<Asistencia>> =
+        asistenciaDao.getAsistenciasAlumnoGlobal(matricula, grupoId)
 }

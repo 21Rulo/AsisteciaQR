@@ -26,6 +26,7 @@ fun GrupoDetailScreen(
     viewModel: AsistenciaViewModel,
     grupoId: Long,
     onScanAsistencia: () -> Unit,
+    onVerHistorial: () -> Unit, // ← NUEVO
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
@@ -37,7 +38,6 @@ fun GrupoDetailScreen(
     var showAddDialog by remember { mutableStateOf(false) }
     var isGeneratingPDF by remember { mutableStateOf(false) }
 
-    // Launcher para seleccionar archivo CSV
     val csvLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri ->
@@ -46,7 +46,6 @@ fun GrupoDetailScreen(
         }
     }
 
-    // Cargar grupo seleccionado
     LaunchedEffect(grupoId) {
         val grupo = grupos.find { it.id == grupoId }
         grupo?.let { viewModel.selectGrupo(it) }
@@ -54,7 +53,6 @@ fun GrupoDetailScreen(
 
     val selectedGrupo = grupos.find { it.id == grupoId }
 
-    // Mostrar resultado de importación CSV
     LaunchedEffect(csvImportResult) {
         csvImportResult?.let { result ->
             when (result) {
@@ -81,7 +79,7 @@ fun GrupoDetailScreen(
                     }
                 },
                 actions = {
-                    // Botón para generar PDF
+                    // Botón para generar PDF de QRs
                     IconButton(
                         onClick = {
                             if (alumnos.isEmpty()) {
@@ -94,7 +92,6 @@ fun GrupoDetailScreen(
                                 grupoId = grupoId,
                                 onSuccess = { file ->
                                     isGeneratingPDF = false
-                                    // Compartir PDF
                                     val uri = FileProvider.getUriForFile(
                                         context,
                                         "${context.packageName}.fileprovider",
@@ -121,8 +118,13 @@ fun GrupoDetailScreen(
                                 strokeWidth = 2.dp
                             )
                         } else {
-                            Icon(Icons.Default.PictureAsPdf, "Generar PDF")
+                            Icon(Icons.Default.QrCode, "Generar PDF QRs")
                         }
+                    }
+
+                    // NUEVO: Botón para ver historial
+                    IconButton(onClick = onVerHistorial) {
+                        Icon(Icons.Default.History, "Ver Historial")
                     }
                 }
             )
