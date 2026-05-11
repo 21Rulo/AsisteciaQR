@@ -4,9 +4,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ExitToApp
-import androidx.compose.material.icons.filled.Group
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -22,6 +20,7 @@ fun ProfesorHomeScreen(
     viewModel: AsistenciaViewModel,
     onCreateGrupo: () -> Unit,
     onGrupoClick: (Long) -> Unit,
+    onConfiguracion: () -> Unit,  // NUEVO
     onLogout: () -> Unit
 ) {
     val grupos by viewModel.grupos.collectAsState()
@@ -31,6 +30,10 @@ fun ProfesorHomeScreen(
             TopAppBar(
                 title = { Text("Mis Grupos") },
                 actions = {
+                    // NUEVO: Botón de configuración
+                    IconButton(onClick = onConfiguracion) {
+                        Icon(Icons.Default.Settings, contentDescription = "Configuración")
+                    }
                     IconButton(onClick = onLogout) {
                         Icon(Icons.Default.ExitToApp, contentDescription = "Cerrar sesión")
                     }

@@ -17,8 +17,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import com.sssl.asisteciaqr.data.entity.Alumno
 import com.sssl.asisteciaqr.ui.viewmodel.AsistenciaViewModel
 import com.sssl.asisteciaqr.ui.viewmodel.CSVImportResult
+import com.sssl.asisteciaqr.utils.QRGenerator
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -26,7 +28,7 @@ fun GrupoDetailScreen(
     viewModel: AsistenciaViewModel,
     grupoId: Long,
     onScanAsistencia: () -> Unit,
-    onVerHistorial: () -> Unit, // ← NUEVO
+    onVerHistorial: () -> Unit,
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
@@ -37,6 +39,7 @@ fun GrupoDetailScreen(
 
     var showAddDialog by remember { mutableStateOf(false) }
     var isGeneratingPDF by remember { mutableStateOf(false) }
+    var alumnoSeleccionadoQR by remember { mutableStateOf<Alumno?>(null) }
 
     val csvLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -79,7 +82,7 @@ fun GrupoDetailScreen(
                     }
                 },
                 actions = {
-                    // Botón para generar PDF de QRs
+                    // Botón para generar PDF de QRs (TODOS)
                     IconButton(
                         onClick = {
                             if (alumnos.isEmpty()) {
@@ -122,7 +125,6 @@ fun GrupoDetailScreen(
                         }
                     }
 
-                    // NUEVO: Botón para ver historial
                     IconButton(onClick = onVerHistorial) {
                         Icon(Icons.Default.History, "Ver Historial")
                     }
@@ -134,7 +136,6 @@ fun GrupoDetailScreen(
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // Botón pasar lista
                 FloatingActionButton(
                     onClick = onScanAsistencia,
                     containerColor = MaterialTheme.colorScheme.primary
@@ -142,7 +143,6 @@ fun GrupoDetailScreen(
                     Icon(Icons.Default.QrCodeScanner, "Pasar lista")
                 }
 
-                // Botón agregar alumno manual
                 FloatingActionButton(
                     onClick = { showAddDialog = true },
                     containerColor = MaterialTheme.colorScheme.secondary
@@ -150,7 +150,6 @@ fun GrupoDetailScreen(
                     Icon(Icons.Default.PersonAdd, "Agregar alumno")
                 }
 
-                // Botón importar CSV
                 FloatingActionButton(
                     onClick = { csvLauncher.launch("text/*") },
                     containerColor = MaterialTheme.colorScheme.tertiary
@@ -165,7 +164,7 @@ fun GrupoDetailScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            // Header con info del grupo
+            // Header
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -250,10 +249,10 @@ fun GrupoDetailScreen(
                 ) {
                     items(alumnos) { alumno ->
                         val presente = asistenciasHoy.any { it.matriculaAlumno == alumno.matricula }
-                        AlumnoItem(
-                            nombre = alumno.nombre,
-                            matricula = alumno.matricula,
-                            presente = presente
+                        AlumnoItemConQR(
+                            alumno = alumno,
+                            presente = presente,
+                            onGenerarQR = { alumnoSeleccionadoQR = alumno }
                         )
                     }
                 }
@@ -261,7 +260,7 @@ fun GrupoDetailScreen(
         }
     }
 
-    // Dialog para agregar alumno manualmente
+    // Dialog para agregar alumno
     if (showAddDialog) {
         AddAlumnoDialog(
             onDismiss = { showAddDialog = false },
@@ -273,13 +272,47 @@ fun GrupoDetailScreen(
             }
         )
     }
+
+    // Dialog para generar QR individual
+    alumnoSeleccionadoQR?.let { alumno ->
+        GenerarQRIndividualDialog(
+            alumno = alumno,
+            onDismiss = { alumnoSeleccionadoQR = null },
+            onGenerar = {
+                val file = QRGenerator.generarQRIndividual(
+                    context = context,
+                    qrToken = alumno.qrToken,
+                    nombreAlumno = alumno.nombre,
+                    matricula = alumno.matricula
+                )
+
+                if (file != null) {
+                    val uri = FileProvider.getUriForFile(
+                        context,
+                        "${context.packageName}.fileprovider",
+                        file
+                    )
+                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                        type = "image/png"
+                        putExtra(Intent.EXTRA_STREAM, uri)
+                        putExtra(Intent.EXTRA_TEXT, "QR de ${alumno.nombre} - Mat: ${alumno.matricula}")
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    context.startActivity(Intent.createChooser(shareIntent, "Enviar QR a ${alumno.nombre}"))
+                    alumnoSeleccionadoQR = null
+                } else {
+                    Toast.makeText(context, "Error al generar QR", Toast.LENGTH_SHORT).show()
+                }
+            }
+        )
+    }
 }
 
 @Composable
-fun AlumnoItem(
-    nombre: String,
-    matricula: String,
-    presente: Boolean
+fun AlumnoItemConQR(
+    alumno: Alumno,
+    presente: Boolean,
+    onGenerarQR: () -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -307,26 +340,82 @@ fun AlumnoItem(
             Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = nombre,
+                    text = alumno.nombre,
                     style = MaterialTheme.typography.bodyLarge,
                     fontWeight = FontWeight.Medium
                 )
                 Text(
-                    text = matricula,
+                    text = alumno.matricula,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+
+            // Botón para generar QR individual
+            IconButton(onClick = onGenerarQR) {
+                Icon(
+                    imageVector = Icons.Default.QrCode2,
+                    contentDescription = "Generar QR",
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+
             if (presente) {
                 Text(
                     text = "Presente",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(start = 8.dp)
                 )
             }
         }
     }
+}
+
+@Composable
+fun GenerarQRIndividualDialog(
+    alumno: Alumno,
+    onDismiss: () -> Unit,
+    onGenerar: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Default.QrCode2, null) },
+        title = { Text("Generar QR Individual") },
+        text = {
+            Column {
+                Text("¿Generar código QR para:")
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = alumno.nombre,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "Mat: ${alumno.matricula}",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "Se generará una imagen PNG que podrás enviar directamente al alumno.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = onGenerar) {
+                Icon(Icons.Default.Share, null, Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Generar y Compartir")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancelar")
+            }
+        }
+    )
 }
 
 @Composable

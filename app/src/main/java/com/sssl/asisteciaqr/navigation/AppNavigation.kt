@@ -3,8 +3,6 @@ package com.sssl.asisteciaqr.navigation
 import android.content.Intent
 import android.widget.Toast
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.FileProvider
 import androidx.navigation.NavHostController
@@ -20,13 +18,13 @@ sealed class Screen(val route: String) {
     object ProfesorLogin : Screen("profesor_login")
     object ProfesorHome : Screen("profesor_home")
     object CreateGrupo : Screen("create_grupo")
+    object Configuracion : Screen("configuracion")  // NUEVA RUTA
     object GrupoDetail : Screen("grupo_detail/{grupoId}") {
         fun createRoute(grupoId: Long) = "grupo_detail/$grupoId"
     }
     object ScanAsistencia : Screen("scan_asistencia/{grupoId}") {
         fun createRoute(grupoId: Long) = "scan_asistencia/$grupoId"
     }
-    // NUEVAS RUTAS
     object Historial : Screen("historial/{grupoId}") {
         fun createRoute(grupoId: Long) = "historial/$grupoId"
     }
@@ -64,6 +62,7 @@ fun AppNavigation(
                 onGrupoClick = { grupoId ->
                     navController.navigate(Screen.GrupoDetail.createRoute(grupoId))
                 },
+                onConfiguracion = { navController.navigate(Screen.Configuracion.route) },  // NUEVO
                 onLogout = {
                     navController.navigate(Screen.ProfesorLogin.route) {
                         popUpTo(Screen.ProfesorLogin.route) { inclusive = true }
@@ -80,6 +79,13 @@ fun AppNavigation(
             )
         }
 
+        // NUEVA RUTA: Configuración
+        composable(Screen.Configuracion.route) {
+            ConfiguracionScreen(
+                onBack = { navController.popBackStack() }
+            )
+        }
+
         composable(
             route = Screen.GrupoDetail.route,
             arguments = listOf(navArgument("grupoId") { type = NavType.LongType })
@@ -89,7 +95,7 @@ fun AppNavigation(
                 viewModel = viewModel,
                 grupoId = grupoId,
                 onScanAsistencia = { navController.navigate(Screen.ScanAsistencia.createRoute(grupoId)) },
-                onVerHistorial = { navController.navigate(Screen.Historial.createRoute(grupoId)) }, // NUEVO
+                onVerHistorial = { navController.navigate(Screen.Historial.createRoute(grupoId)) },
                 onBack = { navController.popBackStack() }
             )
         }
@@ -106,7 +112,6 @@ fun AppNavigation(
             )
         }
 
-        // NUEVA: Pantalla de Historial
         composable(
             route = Screen.Historial.route,
             arguments = listOf(navArgument("grupoId") { type = NavType.LongType })
@@ -119,7 +124,6 @@ fun AppNavigation(
                     navController.navigate(Screen.DetalleAlumno.createRoute(grupoId, matricula))
                 },
                 onGenerarPDFGrupo = {
-                    // Generar PDF del grupo
                     val grupos = viewModel.grupos.value
                     val grupo = grupos.find { it.id == grupoId }
                     val estadisticas = viewModel.estadisticasAlumnos.value
@@ -137,11 +141,7 @@ fun AppNavigation(
                         )
 
                         if (file != null) {
-                            val uri = FileProvider.getUriForFile(
-                                context,
-                                "${context.packageName}.fileprovider",
-                                file
-                            )
+                            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
                             val shareIntent = Intent(Intent.ACTION_SEND).apply {
                                 type = "application/pdf"
                                 putExtra(Intent.EXTRA_STREAM, uri)
@@ -151,15 +151,12 @@ fun AppNavigation(
                         } else {
                             Toast.makeText(context, "Error al generar PDF", Toast.LENGTH_SHORT).show()
                         }
-                    } else {
-                        Toast.makeText(context, "No hay datos para generar el reporte", Toast.LENGTH_SHORT).show()
                     }
                 },
                 onBack = { navController.popBackStack() }
             )
         }
 
-        // NUEVA: Pantalla de Detalle de Alumno
         composable(
             route = Screen.DetalleAlumno.route,
             arguments = listOf(
@@ -175,7 +172,6 @@ fun AppNavigation(
                 grupoId = grupoId,
                 matricula = matricula,
                 onGenerarPDFIndividual = {
-                    // Generar PDF individual
                     val grupos = viewModel.grupos.value
                     val grupo = grupos.find { it.id == grupoId }
                     val alumnos = viewModel.alumnosDelGrupo.value
@@ -197,11 +193,7 @@ fun AppNavigation(
                         )
 
                         if (file != null) {
-                            val uri = FileProvider.getUriForFile(
-                                context,
-                                "${context.packageName}.fileprovider",
-                                file
-                            )
+                            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
                             val shareIntent = Intent(Intent.ACTION_SEND).apply {
                                 type = "application/pdf"
                                 putExtra(Intent.EXTRA_STREAM, uri)
@@ -211,8 +203,6 @@ fun AppNavigation(
                         } else {
                             Toast.makeText(context, "Error al generar PDF", Toast.LENGTH_SHORT).show()
                         }
-                    } else {
-                        Toast.makeText(context, "No hay datos para generar el reporte", Toast.LENGTH_SHORT).show()
                     }
                 },
                 onBack = { navController.popBackStack() }
