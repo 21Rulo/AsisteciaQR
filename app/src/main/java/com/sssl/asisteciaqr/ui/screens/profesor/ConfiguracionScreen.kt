@@ -19,7 +19,8 @@ import com.sssl.asisteciaqr.utils.PasswordManager
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConfiguracionScreen(
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onConfigSonidos: () -> Unit
 ) {
     val context = LocalContext.current
     val isUsingDefault = remember { PasswordManager.isUsingDefaultPassword(context) }
@@ -162,7 +163,51 @@ fun ConfiguracionScreen(
                 }
             }
 
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(4.dp))
+
+            // ---- SECCIÓN SONIDOS ----
+            Text(
+                text = "Sonidos",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+
+            // Configurar sonidos
+            Card(
+                onClick = onConfigSonidos,
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+                )
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Default.VolumeUp,
+                        null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(28.dp)
+                    )
+                    Spacer(Modifier.width(16.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Sonidos de escaneo", fontWeight = FontWeight.Medium)
+                        Text(
+                            text = "Elige el sonido para éxito, error y advertencia",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+
+            Spacer(Modifier.weight(1f))
+
+
 
             // Información sobre recuperación
             Card(

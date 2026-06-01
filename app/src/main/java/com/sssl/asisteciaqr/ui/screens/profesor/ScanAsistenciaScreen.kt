@@ -5,7 +5,6 @@ import android.media.AudioManager
 import android.media.ToneGenerator
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -25,6 +24,7 @@ import com.sssl.asisteciaqr.ui.components.ContinuousQRScanner
 import com.sssl.asisteciaqr.ui.viewmodel.AsistenciaViewModel
 import com.sssl.asisteciaqr.ui.viewmodel.ScanMessage
 import com.sssl.asisteciaqr.utils.DateUtils
+import com.sssl.asisteciaqr.utils.SoundManager
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -54,21 +54,15 @@ fun ScanAsistenciaScreen(
         permissionLauncher.launch(Manifest.permission.CAMERA)
     }
 
-    // Efecto de sonido según el mensaje
+    // Sonidos usando SoundManager (respeta la elección del usuario)
     LaunchedEffect(scanMessage) {
         when (scanMessage) {
-            is ScanMessage.Success -> {
-                // Sonido de éxito (beep corto)
-                toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP, 150)
-            }
-            is ScanMessage.AlreadyRegistered -> {
-                // Sonido de advertencia (dos beeps)
-                toneGenerator.startTone(ToneGenerator.TONE_PROP_NACK, 200)
-            }
-            is ScanMessage.Error, is ScanMessage.InvalidQR, is ScanMessage.NotInGroup, is ScanMessage.WrongGroup -> {
-                // Sonido de error (beep largo)
-                toneGenerator.startTone(ToneGenerator.TONE_CDMA_ABBR_ALERT, 300)
-            }
+            is ScanMessage.Success -> SoundManager.playSuccessSound(context)
+            is ScanMessage.AlreadyRegistered -> SoundManager.playWarningSound(context)
+            is ScanMessage.WrongGroup,
+            is ScanMessage.NotInGroup,
+            is ScanMessage.InvalidQR,
+            is ScanMessage.Error -> SoundManager.playErrorSound(context)
             else -> {}
         }
 
@@ -79,9 +73,7 @@ fun ScanAsistenciaScreen(
     }
 
     DisposableEffect(Unit) {
-        onDispose {
-            toneGenerator.release()
-        }
+        onDispose { SoundManager.release() }
     }
 
     Scaffold(

@@ -18,7 +18,8 @@ sealed class Screen(val route: String) {
     object ProfesorLogin : Screen("profesor_login")
     object ProfesorHome : Screen("profesor_home")
     object CreateGrupo : Screen("create_grupo")
-    object Configuracion : Screen("configuracion")  // NUEVA RUTA
+    object Configuracion : Screen("configuracion")
+    object ConfiguracionSonidos : Screen("configuracion_sonidos")
     object GrupoDetail : Screen("grupo_detail/{grupoId}") {
         fun createRoute(grupoId: Long) = "grupo_detail/$grupoId"
     }
@@ -82,6 +83,13 @@ fun AppNavigation(
         // NUEVA RUTA: Configuración
         composable(Screen.Configuracion.route) {
             ConfiguracionScreen(
+                onBack = { navController.popBackStack() },
+                onConfigSonidos = { navController.navigate(Screen.ConfiguracionSonidos.route) }
+            )
+        }
+
+        composable(Screen.ConfiguracionSonidos.route) {
+            ConfiguracionSonidosScreen(
                 onBack = { navController.popBackStack() }
             )
         }
